@@ -1,5 +1,5 @@
 """
-Utility module for AV1 to HEVC converter.
+Utility module for video converter.
 Handles file operations, validation, and helper functions.
 """
 
@@ -10,20 +10,50 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
+from config import SUPPORTED_CODECS
+
 
 class VideoUtils:
     """Utility class for video file operations and validation."""
     
     # Supported video file extensions
-    VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.m4v', '.mov', '.avi', '.webm'}
+    VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.m4v', '.mov', '.avi', '.webm', '.mpg', '.mpeg', '.wmv', '.flv'}
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
     @staticmethod
+    def find_videos_by_codec(directory: Path, target_codec: Optional[str] = None) -> List[Path]:
+        """
+        Find video files with specific codec in the given directory.
+        
+        Args:
+            directory: Directory to search for videos
+            target_codec: Target codec to filter by (None means all videos)
+            
+        Returns:
+            List of Path objects for video files
+        """
+        videos = []
+        
+        for file_path in directory.rglob('*'):
+            if (file_path.is_file() and 
+                file_path.suffix.lower() in VideoUtils.VIDEO_EXTENSIONS):
+                
+                if target_codec:
+                    codec = VideoUtils.get_video_codec(file_path)
+                    if codec == target_codec:
+                        videos.append(file_path)
+                else:
+                    videos.append(file_path)
+        
+        return sorted(videos)
+    
+    @staticmethod
     def find_av1_videos(directory: Path) -> List[Path]:
         """
         Find all AV1 video files in the given directory.
+        Kept for backward compatibility.
         
         Args:
             directory: Directory to search for AV1 videos
@@ -31,27 +61,18 @@ class VideoUtils:
         Returns:
             List of Path objects for AV1 video files
         """
-        av1_videos = []
-        
-        for file_path in directory.rglob('*'):
-            if (file_path.is_file() and 
-                file_path.suffix.lower() in VideoUtils.VIDEO_EXTENSIONS):
-                
-                if VideoUtils.is_av1_video(file_path):
-                    av1_videos.append(file_path)
-        
-        return sorted(av1_videos)
+        return VideoUtils.find_videos_by_codec(directory, 'av1')
     
     @staticmethod
-    def is_av1_video(file_path: Path) -> bool:
+    def get_video_codec(file_path: Path) -> Optional[str]:
         """
-        Check if a video file contains AV1 codec.
+        Get the video codec of a file.
         
         Args:
             file_path: Path to the video file
             
         Returns:
-            True if the file contains AV1 video stream
+            Codec name (av1, hevc, h264, vp9, etc.) or None if detection fails
         """
         try:
             result = subprocess.run([
@@ -62,15 +83,48 @@ class VideoUtils:
             if result.returncode == 0:
                 data = json.loads(result.stdout)
                 for stream in data.get('streams', []):
-                    if (stream.get('codec_type') == 'video' and 
-                        stream.get('codec_name') == 'av1'):
-                        return True
+                    if stream.get('codec_type') == 'video':
+                        codec_name = stream.get('codec_name', '').lower()
+                        
+                        # Map FFmpeg codec names to our standard names
+                        codec_mapping = {
+                            'av1': 'av1',
+                            'hevc': 'hevc',
+                            'h265': 'hevc',
+                            'h264': 'h264',
+                            'avc': 'h264',
+                            'vp9': 'vp9',
+                            'vp8': 'vp8',
+                            'mpeg2video': 'mpeg2',
+                            'mpeg4': 'mpeg4',
+                        }
+                        
+                        for key, value in codec_mapping.items():
+                            if key in codec_name:
+                                return value
+                        
+                        # Return original codec name if not in mapping
+                        return codec_name
         
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, 
                 json.JSONDecodeError, FileNotFoundError):
             pass
         
-        return False
+        return None
+    
+    @staticmethod
+    def is_av1_video(file_path: Path) -> bool:
+        """
+        Check if a video file contains AV1 codec.
+        Kept for backward compatibility.
+        
+        Args:
+            file_path: Path to the video file
+            
+        Returns:
+            True if the file contains AV1 video stream
+        """
+        return VideoUtils.get_video_codec(file_path) == 'av1'
     
     @staticmethod
     def get_video_info(file_path: Path) -> Optional[Dict]:
@@ -136,14 +190,15 @@ class VideoUtils:
     
     @staticmethod
     def generate_output_path(input_path: Path, output_dir: Optional[Path] = None, 
-                           suffix: str = "_hevc") -> Path:
+                           output_codec: str = "hevc", suffix: Optional[str] = None) -> Path:
         """
         Generate output file path for converted video.
         
         Args:
             input_path: Path to input video file
             output_dir: Output directory (defaults to same as input)
-            suffix: Suffix to add to filename
+            output_codec: Target codec for determining file extension
+            suffix: Optional suffix to add to filename
             
         Returns:
             Path object for output file
@@ -154,9 +209,25 @@ class VideoUtils:
         # Create output directory if it doesn't exist
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # Determine file extension based on output codec
+        codec_extensions = {
+            'hevc': '.mkv',
+            'h264': '.mp4',
+            'av1': '.mkv',
+            'vp9': '.webm',
+        }
+        extension = codec_extensions.get(output_codec, '.mkv')
+        
         # Generate new filename
         stem = input_path.stem
-        extension = '.mkv'  # Use MKV for maximum compatibility with HEVC
+        
+        # Add codec info to suffix if not provided
+        if suffix is None:
+            input_codec = VideoUtils.get_video_codec(input_path)
+            if input_codec and output_codec:
+                suffix = f"_{input_codec}_to_{output_codec}"
+            else:
+                suffix = f"_{output_codec}"
         
         output_filename = f"{stem}{suffix}{extension}"
         return output_dir / output_filename
@@ -216,6 +287,47 @@ class VideoUtils:
             hours = int(estimated_minutes // 60)
             mins = int(estimated_minutes % 60)
             return f"~{hours}h {mins}m"
+    
+    @staticmethod
+    def get_codec_display_name(codec: str) -> str:
+        """Get display name for a codec."""
+        if codec in SUPPORTED_CODECS["input"]:
+            return SUPPORTED_CODECS["input"][codec]["name"]
+        elif codec in SUPPORTED_CODECS["output"]:
+            return SUPPORTED_CODECS["output"][codec]["name"]
+        return codec.upper()
+    
+    @staticmethod
+    def is_video_file(file_path: Path) -> bool:
+        """
+        Check if a file is a video file based on extension and codec detection.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            True if the file is a valid video file
+        """
+        # First check extension
+        if file_path.suffix.lower() not in VideoUtils.VIDEO_EXTENSIONS:
+            return False
+        
+        # Then try to detect codec
+        codec = VideoUtils.get_video_codec(file_path)
+        return codec is not None
+    
+    @staticmethod
+    def find_video_files(directory: Path) -> List[Path]:
+        """
+        Find all video files in the given directory.
+        
+        Args:
+            directory: Directory to search for videos
+            
+        Returns:
+            List of Path objects for video files
+        """
+        return VideoUtils.find_videos_by_codec(directory, None)
 
 
 def setup_logging(verbose: bool = False) -> None:

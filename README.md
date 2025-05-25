@@ -1,23 +1,27 @@
-# AV1 to HEVC Video Converter
+# Multi-Codec Video Converter
 
-A high-performance video conversion tool for converting AV1 videos to HEVC (H.265) with GPU acceleration, HDR preservation, and batch processing capabilities. Available in both command-line and graphical user interface versions.
+A high-performance video conversion tool for converting videos between different codecs with GPU acceleration, HDR preservation, and batch processing capabilities. Available in both command-line and graphical user interface versions.
 
 ## Features
 
-- **GPU Acceleration**: Automatically detects and uses available GPU encoders:
-  - NVIDIA NVENC (hevc_nvenc)
-  - AMD AMF (hevc_amf) 
-  - Intel Quick Sync Video (hevc_qsv)
-  - Falls back to CPU encoding (libx265) if no GPU available
+- **Multi-Codec Support**: Convert between various video codecs:
+  - **Input**: AV1, HEVC/H.265, H.264/AVC, VP9, VP8, MPEG-2, MPEG-4
+  - **Output**: HEVC/H.265, H.264/AVC, AV1, VP9
 
-- **HDR Preservation**: Maintains HDR10, HDR10+, and HLG metadata
-- **Batch Processing**: Convert entire directories of AV1 videos
-- **Quality Control**: Configurable quality settings (CRF/CQ/QP)
+- **GPU Acceleration**: Automatically detects and uses available GPU encoders:
+  - NVIDIA NVENC (for HEVC, H.264, AV1)
+  - AMD AMF (for HEVC, H.264)
+  - Intel Quick Sync Video (for HEVC, H.264, AV1)
+  - Falls back to CPU encoding if no GPU available
+
+- **HDR Preservation**: Maintains HDR10, HDR10+, and HLG metadata (HEVC/AV1 only)
+- **Batch Processing**: Convert entire directories with codec filtering
+- **Quality Control**: Configurable quality settings adapted to each codec
 - **Progress Tracking**: Real-time conversion progress with ETA
-- **Smart Output**: Generates appropriate output filenames and paths
+- **Smart Output**: Generates appropriate output filenames and container formats
 - **Comprehensive Logging**: Detailed logging with verbose mode
 - **Dry Run Mode**: Preview what will be converted without actually converting
-- **Graphical Interface**: Modern GUI with drag-and-drop support and visual progress tracking
+- **Graphical Interface**: Modern GUI with codec selection and visual progress tracking
 - **Cross-Platform**: Works on Windows, macOS, and Linux
 
 ## Requirements
@@ -60,8 +64,8 @@ sudo pacman -S ffmpeg
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/av1-to-hevc.git
-   cd av1-to-hevc
+   git clone https://github.com/yourusername/video-converter.git
+   cd video-converter
    ```
 
 2. **Install Python dependencies:**
@@ -101,22 +105,25 @@ python av1_to_hevc.py gui
 
 The GUI provides:
 - Easy file and directory selection with browse dialogs
+- Input/output codec selection with dropdown menus
 - Real-time conversion progress with visual feedback
 - Quality presets and advanced settings
+- Codec filtering for batch operations
 - System information and GPU detection
-- Batch processing with progress tracking
-- Drag-and-drop support (coming soon)
+- HDR preservation options (for supported codecs)
 
 ### Command Line Interface
 
-Convert all AV1 videos in a directory:
+Convert videos with automatic codec detection:
 ```bash
-python av1_to_hevc.py -d /path/to/videos
-```
+# Convert all videos in a directory to HEVC
+python av1_to_hevc.py -d /path/to/videos -c hevc
 
-Convert a single file:
-```bash
-python av1_to_hevc.py convert input_video.mkv
+# Convert only AV1 videos to H.264
+python av1_to_hevc.py -d /path/to/videos -i av1 -c h264
+
+# Convert a single file to VP9
+python av1_to_hevc.py convert input_video.mkv -c vp9
 ```
 
 ### Command Line Options
@@ -125,212 +132,202 @@ python av1_to_hevc.py convert input_video.mkv
 # Show help
 python av1_to_hevc.py --help
 
-# Convert directory with custom quality
-python av1_to_hevc.py -d /videos -q 20
+# Convert directory with codec selection
+python av1_to_hevc.py -d /videos -c hevc -q 20
 
-# Convert with custom output directory
-python av1_to_hevc.py -d /input -o /output
+# Filter by input codec
+python av1_to_hevc.py -d /videos -i vp9 -c h264
+
+# Custom output directory
+python av1_to_hevc.py -d /input -o /output -c hevc
 
 # Disable HDR preservation
-python av1_to_hevc.py -d /videos --no-hdr
+python av1_to_hevc.py -d /videos --no-hdr -c hevc
 
 # Dry run (show what would be converted)
-python av1_to_hevc.py -d /videos --dry-run
+python av1_to_hevc.py -d /videos -c av1 --dry-run
 
 # Verbose logging
-python av1_to_hevc.py -d /videos -v
+python av1_to_hevc.py -d /videos -c hevc -v
 ```
 
 ### Examples
 
-**Basic batch conversion:**
+**Convert AV1 videos to HEVC:**
 ```bash
-python av1_to_hevc.py -d "C:\Videos\AV1_Movies"
+python av1_to_hevc.py -d "C:\Videos\Movies" -i av1 -c hevc
 ```
 
-**High quality conversion:**
+**Convert all videos to H.264 for compatibility:**
 ```bash
-python av1_to_hevc.py -d /movies -q 18 -o /converted
+python av1_to_hevc.py -d /movies -c h264 -q 23
 ```
 
-**Convert single file with custom output:**
+**High quality HEVC conversion:**
 ```bash
-python av1_to_hevc.py convert movie.mkv -o movie_hevc.mkv -q 20
+python av1_to_hevc.py convert movie.mp4 -c hevc -q 18
+```
+
+**Convert VP9 videos to AV1:**
+```bash
+python av1_to_hevc.py -d /videos -i vp9 -c av1 -q 30
 ```
 
 **Preview conversion without executing:**
 ```bash
-python av1_to_hevc.py -d /videos --dry-run
+python av1_to_hevc.py -d /videos -c hevc --dry-run
 ```
+
+## Codec Support
+
+### Input Codecs
+- **AV1**: Modern codec with excellent compression
+- **HEVC/H.265**: High efficiency video coding
+- **H.264/AVC**: Most compatible codec
+- **VP9**: Google's open video codec
+- **VP8**: Older WebM video codec
+- **MPEG-2**: Legacy broadcast/DVD codec
+- **MPEG-4**: Older compression standard
+
+### Output Codecs
+- **HEVC/H.265**: Best quality/size ratio, HDR support
+- **H.264/AVC**: Maximum compatibility
+- **AV1**: Cutting-edge compression, HDR support
+- **VP9**: Open codec for web streaming
+
+### Container Formats
+- **HEVC**: .mkv (Matroska)
+- **H.264**: .mp4 (MPEG-4)
+- **AV1**: .mkv (Matroska)
+- **VP9**: .webm (WebM)
 
 ## Quality Settings
 
-The quality parameter (`-q`) controls the output quality:
+Quality parameters vary by codec:
 
-- **1-18**: Very high quality (larger file sizes)
-- **19-23**: High quality (recommended range)
-- **24-28**: Medium quality 
-- **29-35**: Lower quality (smaller file sizes)
+### HEVC/H.264 (CRF 1-51)
+- **1-18**: Very high quality (larger files)
+- **19-23**: High quality (recommended)
+- **24-28**: Medium quality
+- **29-35**: Lower quality (smaller files)
 - **36-51**: Very low quality
 
-**Recommended settings:**
-- **18-20**: For archival/reference quality
-- **21-23**: For high quality viewing (default: 23)
-- **24-26**: For standard quality/streaming
-- **27-30**: For lower bitrate requirements
+### AV1/VP9 (CRF 1-63)
+- **1-20**: Very high quality
+- **21-30**: High quality (recommended)
+- **31-40**: Medium quality
+- **41-50**: Lower quality
+- **51-63**: Very low quality
+
+**Recommended settings by use case:**
+- **Archival**: 18-20 (HEVC/H.264) or 20-25 (AV1/VP9)
+- **High quality viewing**: 21-23 (HEVC/H.264) or 28-32 (AV1/VP9)
+- **Streaming**: 24-26 (HEVC/H.264) or 35-40 (AV1/VP9)
+- **Mobile/Low bandwidth**: 27-30 (HEVC/H.264) or 40-45 (AV1/VP9)
 
 ## GPU Acceleration
 
-The tool automatically detects available GPU encoders:
+The tool automatically detects and uses available hardware encoders:
 
-### NVIDIA (NVENC)
-- Requires GTX 1660/RTX 20 series or newer
-- HEVC encoding support required
-- Typically 3-5x faster than CPU
+### Codec Support by GPU
 
-### AMD (AMF) 
-- Requires RX 400 series or newer
-- VCN (Video Core Next) support required
-- Good quality and performance
+| GPU Type | HEVC | H.264 | AV1 | VP9 |
+|----------|------|-------|-----|-----|
+| NVIDIA   | ✓    | ✓     | ✓*  | ✗   |
+| AMD      | ✓    | ✓     | ✗   | ✗   |
+| Intel    | ✓    | ✓     | ✓** | ✗   |
 
-### Intel (Quick Sync)
-- Requires 7th gen Core processors or newer
-- Built into Intel integrated graphics
-- Lower quality than dedicated GPUs but very fast
+*NVIDIA AV1 requires RTX 40 series or newer  
+**Intel AV1 requires Arc GPU or 12th gen+ with iGPU
 
-### CPU Fallback
-- Uses libx265 encoder
-- Slower but highest quality
-- Works on any system
+### Performance
+- **GPU encoding**: 3-10x faster than CPU
+- **Quality tradeoff**: GPU encoding is slightly lower quality than CPU at same settings
+- **Power efficiency**: GPU encoding uses less power than CPU
 
 ## HDR Support
 
-The converter preserves various HDR formats with intelligent handling for different encoder types:
+HDR metadata preservation is supported for:
+- **HEVC**: Full HDR10, HDR10+, HLG support
+- **AV1**: HDR10, HLG support
+- **H.264**: Limited HDR support (not recommended)
+- **VP9**: No HDR support
 
-- **HDR10**: Static metadata preservation
-- **HDR10+**: Dynamic metadata support
-- **HLG (Hybrid Log-Gamma)**: BBC/NHK standard
-- **Dolby Vision**: Profile-dependent support
-
-### HDR Handling by Encoder Type
-
-**GPU Encoders (NVENC/AMF/QSV):**
-- Automatically detects HDR parameters from input video
-- Uses explicit color values (e.g., bt2020, smpte2084) instead of "copy"
-- **NVENC**: Best support for HDR10, limited HLG support (auto-converts HLG to HDR10)
-- **AMD AMF**: Good support for both HDR10 and HLG
-- **Intel QSV**: Basic HDR support, varies by generation
-- Automatic fallback to non-HDR if HDR parameters cause errors
-
-**CPU Encoder (x265):**
-- Uses FFmpeg's "copy" mode for perfect metadata preservation
-- Maintains all original HDR metadata and side data
-- Supports advanced HDR optimization parameters
-
-HDR metadata includes:
-- Color primaries (BT.2020)
-- Transfer characteristics (PQ/HLG)
-- Mastering display metadata
-- Content light level information
+The converter intelligently handles HDR based on:
+- Input content HDR metadata
+- Output codec capabilities
+- Encoder type (GPU vs CPU)
 
 ## File Format Support
 
-**Input formats** (AV1 video streams):
+**Input formats**:
 - `.mkv` - Matroska Video
 - `.mp4` - MPEG-4 Part 14
 - `.m4v` - iTunes Video
 - `.mov` - QuickTime Movie
 - `.avi` - Audio Video Interleave
 - `.webm` - WebM Video
+- `.mpg/.mpeg` - MPEG Program Stream
+- `.wmv` - Windows Media Video
+- `.flv` - Flash Video
 
-**Output format:**
-- `.mkv` - Chosen for maximum compatibility with HEVC and HDR
+**Output formats** (by codec):
+- HEVC: `.mkv`
+- H.264: `.mp4`
+- AV1: `.mkv`
+- VP9: `.webm`
 
 ## Performance Tips
 
-1. **Use GPU acceleration** when available for 3-5x speed improvement
-2. **Adjust quality settings** based on your needs (lower = faster)
-3. **Process smaller batches** if memory is limited
-4. **Use SSDs** for faster I/O during conversion
-5. **Close other applications** to free up system resources
+1. **Choose appropriate codec**: H.264 for compatibility, HEVC for quality/size, AV1 for best compression
+2. **Use GPU acceleration** when available for speed
+3. **Match quality to use case**: Don't over-compress for archival
+4. **Consider source codec**: Avoid transcoding between similar codecs
+5. **Use batch processing** for multiple files
+6. **Monitor temperatures** during long conversions
 
 ## Troubleshooting
 
 ### Common Issues
 
 **FFmpeg not found:**
-```
-Error: FFmpeg not found. Please install FFmpeg and add it to PATH.
-```
 - Install FFmpeg and ensure it's in your system PATH
 - Test with `ffmpeg -version` in command line
 
-**No GPU encoder detected:**
-- Update your GPU drivers to the latest version
-- Verify GPU supports hardware encoding
+**Unsupported codec:**
+- Check if your FFmpeg build includes the required encoder
+- Some codecs (like AV1) may need newer FFmpeg versions
+
+**GPU encoder not detected:**
+- Update GPU drivers to latest version
+- Verify GPU model supports the target codec
 - Check if GPU is being used by other applications
 
-**Conversion failed:**
-- Check input file is not corrupted
-- Ensure sufficient disk space for output
-- Try with different quality settings
-- Enable verbose logging with `-v` for details
-
 **HDR conversion issues:**
-```
-Error setting option color_primaries to value copy
-```
-- This error occurs with GPU encoders that don't support "copy" mode
-- The converter now automatically detects HDR parameters and uses explicit values
-- If issues persist, try disabling HDR preservation with `--no-hdr`
+- HDR is only supported for HEVC and AV1 output
+- Some GPU encoders have limited HDR support
+- Try CPU encoding for better HDR compatibility
 
-**NVENC HLG compatibility issues:**
-```
-Task finished with error code: -22 (Invalid argument)
-```
-- NVENC has limited support for HLG (Hybrid Log-Gamma) HDR content
-- The converter automatically falls back to HDR10 parameters for better compatibility
-- If conversion still fails, it will retry without HDR preservation
-- For HLG content, consider using CPU encoding for better compatibility
-
-**GUI conversion hangs:**
-- Updated progress parsing to use FFmpeg's stderr output instead of progress pipe
-- Added timeout handling (30 seconds with no output)
-- Improved cancellation mechanism that properly terminates FFmpeg processes
-- If conversion still hangs, check FFmpeg installation and try with verbose logging
-
-**Permission errors:**
-- Run with appropriate file permissions
-- Check if files are in use by other applications
-- Try running as administrator (Windows) or with sudo (Linux/macOS)
-
-### Performance Issues
-
-**Slow conversion speeds:**
-- Enable GPU acceleration if available
-- Lower quality settings for faster encoding
-- Close other applications using GPU/CPU
-- Check if thermal throttling is occurring
-
-**High memory usage:**
-- Process files individually instead of batch
-- Restart the application periodically
-- Check available system memory
+**Quality concerns:**
+- GPU encoding trades quality for speed
+- Use CPU encoding for maximum quality
+- Adjust quality parameter based on codec
 
 ## Advanced Configuration
 
 The converter uses modular configuration that can be customized:
 
-### Quality Presets
-- Modify `config.py` to adjust encoder-specific parameters
-- Add custom quality presets for different use cases
-- Configure HDR metadata handling
+### Custom Encoder Parameters
+Edit `config.py` to modify:
+- Encoder-specific settings
+- Quality presets
+- HDR handling parameters
+- Container options
 
-### Encoder Settings
-- NVIDIA NVENC: Spatial/temporal AQ, B-frame settings
-- AMD AMF: Rate control modes, quality presets  
-- Intel QSV: Look-ahead, target usage settings
-- CPU x265: Advanced parameter tuning
+### Batch Processing Options
+- Filter by multiple codecs
+- Custom naming patterns
+- Parallel processing (future feature)
 
 ## Contributing
 

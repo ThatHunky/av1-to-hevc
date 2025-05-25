@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-AV1 to HEVC Video Converter
+Multi-Codec Video Converter
 
-A command-line tool to convert AV1 videos to HEVC with GPU acceleration,
+A command-line tool to convert videos between different codecs with GPU acceleration,
 HDR preservation, and batch processing capabilities.
+
+Supported codecs:
+- Input: AV1, HEVC/H.265, H.264/AVC, VP9, VP8, MPEG-2, MPEG-4
+- Output: HEVC/H.265, H.264/AVC, AV1, VP9
 """
 
 import sys
@@ -15,7 +19,7 @@ import click
 from colorama import init, Fore, Style
 from tqdm import tqdm
 
-from config import Config
+from config import Config, SUPPORTED_CODECS, CODEC_ENCODERS
 from converter import VideoConverter, BatchConverter, ConversionProgress
 from utils import VideoUtils, setup_logging
 
@@ -91,13 +95,33 @@ class ProgressDisplay:
             self.batch_pbar = None
 
 
+# Custom click type for codec selection
+class CodecChoice(click.Choice):
+    """Custom choice type that maps codec names to keys."""
+    
+    def __init__(self, codec_type='output'):
+        self.codec_type = codec_type
+        codecs = SUPPORTED_CODECS[codec_type]
+        self.name_to_key = {v['name'].lower(): k for k, v in codecs.items()}
+        self.name_to_key.update({k: k for k in codecs.keys()})  # Also accept keys directly
+        super().__init__(list(self.name_to_key.keys()))
+    
+    def convert(self, value, param, ctx):
+        value = super().convert(value.lower(), param, ctx)
+        return self.name_to_key[value]
+
+
 @click.group(invoke_without_command=True)
 @click.option('--directory', '-d', type=click.Path(exists=True, path_type=Path),
-              help='Directory containing AV1 videos to convert')
+              help='Directory containing videos to convert')
+@click.option('--input-codec', '-i', type=CodecChoice('input'),
+              help='Filter input videos by codec (for batch mode)')
+@click.option('--output-codec', '-c', type=CodecChoice('output'), default='hevc',
+              help='Output codec (default: hevc)')
 @click.option('--output', '-o', type=click.Path(path_type=Path),
               help='Output directory (defaults to same as input)')
-@click.option('--quality', '-q', type=click.IntRange(1, 51), default=23,
-              help='Quality setting (1=best, 51=worst, default=23)')
+@click.option('--quality', '-q', type=click.IntRange(1, 63), default=23,
+              help='Quality setting (lower=better, default=23)')
 @click.option('--no-hdr', is_flag=True,
               help='Disable HDR metadata preservation')
 @click.option('--verbose', '-v', is_flag=True,
@@ -105,12 +129,23 @@ class ProgressDisplay:
 @click.option('--dry-run', is_flag=True,
               help='Show what would be converted without actually converting')
 @click.pass_context
-def cli(ctx, directory, output, quality, no_hdr, verbose, dry_run):
+def cli(ctx, directory, input_codec, output_codec, output, quality, no_hdr, verbose, dry_run):
     """
-    Convert AV1 videos to HEVC with GPU acceleration and HDR preservation.
+    Convert videos between different codecs with GPU acceleration and HDR preservation.
     
     This tool automatically detects available GPU encoders (NVIDIA NVENC, AMD AMF, Intel QSV)
     and falls back to CPU encoding if no GPU is available.
+    
+    Examples:
+    \b
+      # Convert a single file from AV1 to HEVC
+      video-converter convert input.mkv -c hevc
+    \b  
+      # Convert all VP9 videos in a directory to H.264
+      video-converter batch /path/to/videos -i vp9 -c h264
+    \b
+      # Convert with custom quality
+      video-converter convert input.mp4 -c hevc -q 20
     """
     # Set up logging
     setup_logging(verbose)
@@ -119,7 +154,9 @@ def cli(ctx, directory, output, quality, no_hdr, verbose, dry_run):
     if ctx.invoked_subcommand is None:
         if directory:
             ctx.invoke(batch, 
-                      directory=directory, 
+                      directory=directory,
+                      input_codec=input_codec,
+                      output_codec=output_codec,
                       output=output, 
                       quality=quality, 
                       no_hdr=no_hdr,
@@ -131,16 +168,18 @@ def cli(ctx, directory, output, quality, no_hdr, verbose, dry_run):
 
 @cli.command()
 @click.argument('input_file', type=click.Path(exists=True, path_type=Path))
+@click.option('--output-codec', '-c', type=CodecChoice('output'), default='hevc',
+              help='Output codec (default: hevc)')
 @click.option('--output', '-o', type=click.Path(path_type=Path),
-              help='Output file path (defaults to input_hevc.mkv)')
-@click.option('--quality', '-q', type=click.IntRange(1, 51), default=23,
-              help='Quality setting (1=best, 51=worst, default=23)')
+              help='Output file path')
+@click.option('--quality', '-q', type=click.IntRange(1, 63), default=23,
+              help='Quality setting (lower=better, default=23)')
 @click.option('--no-hdr', is_flag=True,
               help='Disable HDR metadata preservation')
 @click.option('--verbose', '-v', is_flag=True,
               help='Enable verbose logging')
-def convert(input_file, output, quality, no_hdr, verbose):
-    """Convert a single AV1 video file to HEVC."""
+def convert(input_file, output_codec, output, quality, no_hdr, verbose):
+    """Convert a single video file to a different codec."""
     setup_logging(verbose)
     
     # Validate FFmpeg
@@ -148,14 +187,21 @@ def convert(input_file, output, quality, no_hdr, verbose):
         click.echo(f"{Fore.RED}Error: FFmpeg not found. Please install FFmpeg and add it to PATH.")
         sys.exit(1)
     
-    # Check if input is AV1
-    if not VideoUtils.is_av1_video(input_file):
-        click.echo(f"{Fore.RED}Error: {input_file.name} is not an AV1 video.")
+    # Check input codec
+    input_codec = VideoUtils.get_video_codec(input_file)
+    if not input_codec:
+        click.echo(f"{Fore.RED}Error: Could not detect codec for {input_file.name}")
         sys.exit(1)
+    
+    # Check if conversion makes sense
+    if input_codec == output_codec:
+        click.echo(f"{Fore.YELLOW}Warning: Input and output codecs are the same ({input_codec})")
+        if not click.confirm("Continue with re-encoding?"):
+            sys.exit(0)
     
     # Generate output path if not provided
     if output is None:
-        output = VideoUtils.generate_output_path(input_file)
+        output = VideoUtils.generate_output_path(input_file, None, output_codec)
     
     # Check if output already exists
     if output.exists():
@@ -173,10 +219,19 @@ def convert(input_file, output, quality, no_hdr, verbose):
     has_hdr = VideoUtils.has_hdr_metadata(input_file)
     estimated_time = VideoUtils.estimate_conversion_time(file_size, config.gpu_type is not None)
     
+    input_codec_name = VideoUtils.get_codec_display_name(input_codec)
+    output_codec_name = VideoUtils.get_codec_display_name(output_codec)
+    encoder_type, encoder_config = config.get_encoder_config(output_codec)
+    
     click.echo(f"\n{Fore.CYAN}Converting: {Fore.WHITE}{input_file.name}")
+    click.echo(f"{Fore.CYAN}Codec: {Fore.WHITE}{input_codec_name} → {output_codec_name}")
     click.echo(f"{Fore.CYAN}Size: {Fore.WHITE}{file_size:.1f} MB")
-    click.echo(f"{Fore.CYAN}HDR: {Fore.WHITE}{'Yes' if has_hdr else 'No'}")
-    click.echo(f"{Fore.CYAN}Encoder: {Fore.WHITE}{config.encoder_config['encoder']}")
+    
+    if output_codec in ['hevc', 'av1']:
+        click.echo(f"{Fore.CYAN}HDR: {Fore.WHITE}{'Yes' if has_hdr else 'No'}")
+    
+    click.echo(f"{Fore.CYAN}Encoder: {Fore.WHITE}{encoder_config['encoder']} ({encoder_type})")
+    click.echo(f"{Fore.CYAN}Quality: {Fore.WHITE}{quality}")
     click.echo(f"{Fore.CYAN}Estimated time: {Fore.WHITE}{estimated_time}")
     click.echo()
     
@@ -188,7 +243,7 @@ def convert(input_file, output, quality, no_hdr, verbose):
     
     # Start conversion
     success = converter.convert_video(
-        input_file, output, quality, not no_hdr, progress_callback
+        input_file, output, output_codec, quality, not no_hdr, progress_callback
     )
     
     progress_display.finish_file()
@@ -206,18 +261,22 @@ def convert(input_file, output, quality, no_hdr, verbose):
 
 @cli.command()
 @click.argument('directory', type=click.Path(exists=True, path_type=Path))
+@click.option('--input-codec', '-i', type=CodecChoice('input'),
+              help='Filter input videos by codec')
+@click.option('--output-codec', '-c', type=CodecChoice('output'), default='hevc',
+              help='Output codec (default: hevc)')
 @click.option('--output', '-o', type=click.Path(path_type=Path),
               help='Output directory (defaults to same as input)')
-@click.option('--quality', '-q', type=click.IntRange(1, 51), default=23,
-              help='Quality setting (1=best, 51=worst, default=23)')
+@click.option('--quality', '-q', type=click.IntRange(1, 63), default=23,
+              help='Quality setting (lower=better, default=23)')
 @click.option('--no-hdr', is_flag=True,
               help='Disable HDR metadata preservation')
 @click.option('--verbose', '-v', is_flag=True,
               help='Enable verbose logging')
 @click.option('--dry-run', is_flag=True,
               help='Show what would be converted without actually converting')
-def batch(directory, output, quality, no_hdr, verbose, dry_run):
-    """Convert all AV1 videos in a directory to HEVC."""
+def batch(directory, input_codec, output_codec, output, quality, no_hdr, verbose, dry_run):
+    """Convert all videos in a directory to a different codec."""
     setup_logging(verbose)
     
     # Validate FFmpeg
@@ -225,28 +284,50 @@ def batch(directory, output, quality, no_hdr, verbose, dry_run):
         click.echo(f"{Fore.RED}Error: FFmpeg not found. Please install FFmpeg and add it to PATH.")
         sys.exit(1)
     
-    # Find AV1 videos
-    av1_videos = VideoUtils.find_av1_videos(directory)
+    # Find videos
+    videos = VideoUtils.find_videos_by_codec(directory, input_codec)
     
-    if not av1_videos:
-        click.echo(f"{Fore.YELLOW}No AV1 videos found in {directory}")
+    if not videos:
+        if input_codec:
+            codec_name = VideoUtils.get_codec_display_name(input_codec)
+            click.echo(f"{Fore.YELLOW}No {codec_name} videos found in {directory}")
+        else:
+            click.echo(f"{Fore.YELLOW}No videos found in {directory}")
+        return
+    
+    # Filter out videos already in target codec
+    videos_to_convert = []
+    for video in videos:
+        video_codec = VideoUtils.get_video_codec(video)
+        if video_codec != output_codec:
+            videos_to_convert.append(video)
+    
+    if not videos_to_convert:
+        click.echo(f"{Fore.YELLOW}All videos are already in {output_codec.upper()} format")
         return
     
     # Display summary
-    total_size = sum(VideoUtils.get_file_size_mb(f) for f in av1_videos)
-    hdr_count = sum(1 for f in av1_videos if VideoUtils.has_hdr_metadata(f))
+    total_size = sum(VideoUtils.get_file_size_mb(f) for f in videos_to_convert)
+    hdr_count = sum(1 for f in videos_to_convert if VideoUtils.has_hdr_metadata(f))
     
-    click.echo(f"\n{Fore.CYAN}Found {Fore.WHITE}{len(av1_videos)} {Fore.CYAN}AV1 video(s)")
+    output_codec_name = VideoUtils.get_codec_display_name(output_codec)
+    
+    click.echo(f"\n{Fore.CYAN}Found {Fore.WHITE}{len(videos_to_convert)} {Fore.CYAN}video(s) to convert")
+    click.echo(f"{Fore.CYAN}Target codec: {Fore.WHITE}{output_codec_name}")
     click.echo(f"{Fore.CYAN}Total size: {Fore.WHITE}{total_size:.1f} MB")
-    click.echo(f"{Fore.CYAN}HDR videos: {Fore.WHITE}{hdr_count}")
+    
+    if output_codec in ['hevc', 'av1']:
+        click.echo(f"{Fore.CYAN}HDR videos: {Fore.WHITE}{hdr_count}")
     
     if dry_run:
         click.echo(f"\n{Fore.YELLOW}Dry run - files that would be converted:")
-        for video in av1_videos:
-            output_path = VideoUtils.generate_output_path(video, output)
+        for video in videos_to_convert:
+            video_codec = VideoUtils.get_video_codec(video)
+            output_path = VideoUtils.generate_output_path(video, output, output_codec)
             size_mb = VideoUtils.get_file_size_mb(video)
             hdr_indicator = " [HDR]" if VideoUtils.has_hdr_metadata(video) else ""
-            click.echo(f"  {video.name} ({size_mb:.1f} MB){hdr_indicator} → {output_path.name}")
+            codec_info = f"[{VideoUtils.get_codec_display_name(video_codec)}]"
+            click.echo(f"  {video.name} {codec_info} ({size_mb:.1f} MB){hdr_indicator} → {output_path.name}")
         return
     
     # Ask for confirmation
@@ -260,15 +341,16 @@ def batch(directory, output, quality, no_hdr, verbose, dry_run):
     progress_display = ProgressDisplay()
     
     # Display encoder info
-    click.echo(f"\n{Fore.CYAN}Using encoder: {Fore.WHITE}{config.encoder_config['encoder']}")
-    if config.gpu_type:
-        click.echo(f"{Fore.CYAN}GPU acceleration: {Fore.GREEN}Enabled ({config.gpu_type})")
+    encoder_type, encoder_config = config.get_encoder_config(output_codec)
+    click.echo(f"\n{Fore.CYAN}Using encoder: {Fore.WHITE}{encoder_config['encoder']}")
+    if encoder_type != 'cpu':
+        click.echo(f"{Fore.CYAN}GPU acceleration: {Fore.GREEN}Enabled ({encoder_type})")
     else:
         click.echo(f"{Fore.CYAN}GPU acceleration: {Fore.YELLOW}Not available")
     click.echo()
     
     # Set up progress display
-    progress_display.setup_batch_progress(len(av1_videos))
+    progress_display.setup_batch_progress(len(videos_to_convert))
     
     def batch_progress_callback(filename: str, current: int, total: int, progress: ConversionProgress):
         if not progress_display.current_pbar or progress_display.current_pbar.desc != f"Converting {filename}":
@@ -278,7 +360,7 @@ def batch(directory, output, quality, no_hdr, verbose, dry_run):
     # Start batch conversion
     start_time = time.time()
     results = batch_converter.convert_directory(
-        directory, output, quality, not no_hdr, batch_progress_callback
+        directory, output, input_codec, output_codec, quality, not no_hdr, batch_progress_callback
     )
     
     # Clean up progress display
@@ -318,17 +400,24 @@ def info():
     # Initialize config to detect GPU
     config = Config()
     
-    click.echo(f"\n{Fore.CYAN}GPU Acceleration:")
-    if config.gpu_type:
-        click.echo(f"  {Fore.GREEN}✓ {config.gpu_type.upper()} encoder available")
-        click.echo(f"  {Fore.CYAN}Encoder: {Fore.WHITE}{config.encoder_config['encoder']}")
-    else:
-        click.echo(f"  {Fore.YELLOW}No GPU encoders detected")
-        click.echo(f"  {Fore.CYAN}Fallback: {Fore.WHITE}{config.encoder_config['encoder']}")
+    click.echo(f"\n{Fore.CYAN}Available Encoders:")
+    for output_codec in SUPPORTED_CODECS['output']:
+        codec_name = SUPPORTED_CODECS['output'][output_codec]['name']
+        click.echo(f"\n  {Fore.WHITE}{codec_name}:")
+        
+        available_encoders = config.available_encoders.get(output_codec, [])
+        for encoder_type in available_encoders:
+            if encoder_type in config.available_encoders.get(output_codec, []):
+                encoder_config = CODEC_ENCODERS[output_codec][encoder_type]
+                click.echo(f"    {Fore.GREEN}✓ {encoder_config['encoder']} ({encoder_type})")
     
-    click.echo(f"\n{Fore.CYAN}Supported input formats:")
-    for ext in sorted(VideoUtils.VIDEO_EXTENSIONS):
-        click.echo(f"  {ext}")
+    click.echo(f"\n{Fore.CYAN}Supported input codecs:")
+    for codec_key, codec_info in SUPPORTED_CODECS['input'].items():
+        click.echo(f"  • {codec_info['name']}")
+    
+    click.echo(f"\n{Fore.CYAN}Supported output codecs:")
+    for codec_key, codec_info in SUPPORTED_CODECS['output'].items():
+        click.echo(f"  • {codec_info['name']}")
 
 
 @cli.command()

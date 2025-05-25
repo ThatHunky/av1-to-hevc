@@ -1,5 +1,5 @@
 """
-Video converter module for AV1 to HEVC conversion.
+Video converter module for multi-codec video conversion.
 Handles the actual conversion process with progress tracking.
 """
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional, Callable, Dict, Any
 from dataclasses import dataclass
 
-from config import Config
+from config import Config, SUPPORTED_CODECS
 from utils import VideoUtils
 
 
@@ -28,7 +28,7 @@ class ConversionProgress:
 
 
 class VideoConverter:
-    """Handles AV1 to HEVC video conversion with progress tracking."""
+    """Handles video conversion between different codecs with progress tracking."""
     
     def __init__(self, config: Optional[Config] = None):
         """
@@ -42,15 +42,17 @@ class VideoConverter:
         self._current_process = None
         
     def convert_video(self, input_path: Path, output_path: Path,
+                     output_codec: str = "hevc",
                      quality: Optional[int] = None,
                      preserve_hdr: bool = True,
                      progress_callback: Optional[Callable[[ConversionProgress], None]] = None) -> bool:
         """
-        Convert a single AV1 video to HEVC.
+        Convert a video to the specified codec.
         
         Args:
-            input_path: Path to input AV1 video
-            output_path: Path for output HEVC video
+            input_path: Path to input video
+            output_path: Path for output video
+            output_codec: Target codec (hevc, h264, av1, vp9)
             quality: Quality setting override
             preserve_hdr: Whether to preserve HDR metadata
             progress_callback: Optional callback for progress updates
@@ -64,10 +66,16 @@ class VideoConverter:
                 self.logger.error(f"Input file not found: {input_path}")
                 return False
             
-            # Check if it's actually an AV1 video
-            if not VideoUtils.is_av1_video(input_path):
-                self.logger.warning(f"File is not AV1 encoded: {input_path}")
+            # Get input codec
+            input_codec = VideoUtils.get_video_codec(input_path)
+            if not input_codec:
+                self.logger.error(f"Could not detect video codec: {input_path}")
                 return False
+            
+            # Check if conversion makes sense
+            if input_codec == output_codec:
+                self.logger.warning(f"Input and output codecs are the same: {input_codec}")
+                # Could still proceed if user wants to re-encode with different settings
             
             # Get video info for duration calculation
             video_info = VideoUtils.get_video_info(input_path)
@@ -75,23 +83,36 @@ class VideoConverter:
             
             # Log conversion start
             file_size = VideoUtils.get_file_size_mb(input_path)
-            hdr_status = "with HDR" if (preserve_hdr and VideoUtils.has_hdr_metadata(input_path)) else "SDR"
-            estimated_time = VideoUtils.estimate_conversion_time(
-                file_size, self.config.gpu_type is not None
-            )
+            input_codec_name = VideoUtils.get_codec_display_name(input_codec)
+            output_codec_name = VideoUtils.get_codec_display_name(output_codec)
             
-            self.logger.info(f"Converting {input_path.name} ({file_size:.1f} MB) {hdr_status}")
-            self.logger.info(f"Using {self.config.encoder_config['encoder']} encoder")
+            hdr_status = ""
+            if preserve_hdr and output_codec in ["hevc", "av1"]:
+                has_hdr = VideoUtils.has_hdr_metadata(input_path)
+                hdr_status = " (preserving HDR)" if has_hdr else " (SDR)"
+            
+            self.logger.info(f"Converting {input_path.name} ({file_size:.1f} MB)")
+            self.logger.info(f"From {input_codec_name} to {output_codec_name}{hdr_status}")
+            
+            # Get encoder info
+            encoder_type, encoder_config = self.config.get_encoder_config(output_codec)
+            self.logger.info(f"Using {encoder_config['encoder']} encoder ({encoder_type})")
+            
+            # Estimate conversion time
+            estimated_time = VideoUtils.estimate_conversion_time(
+                file_size, encoder_type != "cpu"
+            )
             self.logger.info(f"Estimated time: {estimated_time}")
             
             # Prepare FFmpeg command
-            cmd = self._build_ffmpeg_command(input_path, output_path, quality, preserve_hdr)
+            cmd = self._build_ffmpeg_command(input_path, output_path, output_codec, 
+                                           quality, preserve_hdr)
             
             # Start conversion
             success = self._run_conversion(cmd, duration, progress_callback)
             
             # If conversion failed and we're using GPU with HDR, try fallback
-            if not success and self.config.gpu_type and preserve_hdr:
+            if not success and encoder_type != "cpu" and preserve_hdr:
                 self.logger.warning("Conversion failed with HDR parameters, trying fallback without HDR...")
                 
                 # Clean up failed output file
@@ -102,7 +123,8 @@ class VideoConverter:
                         pass
                 
                 # Retry without HDR preservation
-                cmd_fallback = self._build_ffmpeg_command(input_path, output_path, quality, False)
+                cmd_fallback = self._build_ffmpeg_command(input_path, output_path, output_codec,
+                                                         quality, False)
                 success = self._run_conversion(cmd_fallback, duration, progress_callback)
                 
                 if success:
@@ -132,7 +154,8 @@ class VideoConverter:
             return False
     
     def _build_ffmpeg_command(self, input_path: Path, output_path: Path,
-                             quality: Optional[int], preserve_hdr: bool) -> list:
+                             output_codec: str, quality: Optional[int], 
+                             preserve_hdr: bool) -> list:
         """Build the FFmpeg command for conversion."""
         cmd = ['ffmpeg', '-y']  # -y to overwrite output files
         
@@ -140,10 +163,10 @@ class VideoConverter:
         cmd.extend(['-i', str(input_path)])
         
         # Get conversion parameters from config
-        params = self.config.get_conversion_params(preserve_hdr, quality, str(input_path))
+        params = self.config.get_conversion_params(
+            output_codec, preserve_hdr, quality, str(input_path)
+        )
         cmd.extend(params)
-        
-        # No special progress reporting, we'll parse stderr
         
         # Output file
         cmd.append(str(output_path))
@@ -441,14 +464,17 @@ class BatchConverter:
         self._cancelled = False
     
     def convert_directory(self, input_dir: Path, output_dir: Optional[Path] = None,
+                         input_codec: Optional[str] = None, output_codec: str = "hevc",
                          quality: Optional[int] = None, preserve_hdr: bool = True,
                          progress_callback: Optional[Callable[[str, int, int, ConversionProgress], None]] = None) -> Dict[str, Any]:
         """
-        Convert all AV1 videos in a directory to HEVC.
+        Convert videos in a directory to the specified codec.
         
         Args:
-            input_dir: Directory containing AV1 videos
+            input_dir: Directory containing videos
             output_dir: Output directory (defaults to same as input)
+            input_codec: Source codec to filter by (None means all videos)
+            output_codec: Target codec (hevc, h264, av1, vp9)
             quality: Quality setting override
             preserve_hdr: Whether to preserve HDR metadata
             progress_callback: Optional callback for progress updates (filename, current, total, progress)
@@ -467,26 +493,43 @@ class BatchConverter:
         # Reset cancellation flag
         self._cancelled = False
         
-        # Find all AV1 videos
-        av1_videos = VideoUtils.find_av1_videos(input_dir)
-        results['total'] = len(av1_videos)
+        # Find videos to convert
+        videos = VideoUtils.find_videos_by_codec(input_dir, input_codec)
+        results['total'] = len(videos)
         
-        if not av1_videos:
-            self.logger.info(f"No AV1 videos found in {input_dir}")
+        if not videos:
+            if input_codec:
+                codec_name = VideoUtils.get_codec_display_name(input_codec)
+                self.logger.info(f"No {codec_name} videos found in {input_dir}")
+            else:
+                self.logger.info(f"No videos found in {input_dir}")
             return results
         
-        self.logger.info(f"Found {len(av1_videos)} AV1 video(s) to convert")
+        self.logger.info(f"Found {len(videos)} video(s) to convert")
         
         # Convert each video
-        for i, input_path in enumerate(av1_videos, 1):
+        for i, input_path in enumerate(videos, 1):
             # Check for cancellation
             if self._cancelled:
                 self.logger.info("Batch conversion cancelled by user")
                 break
                 
             try:
+                # Skip if input and output codecs are the same
+                video_codec = VideoUtils.get_video_codec(input_path)
+                if video_codec == output_codec:
+                    self.logger.info(f"Skipping {input_path.name} - already in {output_codec} format")
+                    results['skipped'] += 1
+                    results['files'].append({
+                        'input': str(input_path),
+                        'output': '',
+                        'status': 'skipped',
+                        'reason': 'same_codec'
+                    })
+                    continue
+                
                 # Generate output path
-                output_path = VideoUtils.generate_output_path(input_path, output_dir)
+                output_path = VideoUtils.generate_output_path(input_path, output_dir, output_codec)
                 
                 # Skip if output already exists
                 if output_path.exists():
@@ -495,18 +538,19 @@ class BatchConverter:
                     results['files'].append({
                         'input': str(input_path),
                         'output': str(output_path),
-                        'status': 'skipped'
+                        'status': 'skipped',
+                        'reason': 'exists'
                     })
                     continue
                 
                 # Create progress callback for this file
                 def file_progress_callback(progress: ConversionProgress):
                     if progress_callback:
-                        progress_callback(input_path.name, i, len(av1_videos), progress)
+                        progress_callback(input_path.name, i, len(videos), progress)
                 
                 # Convert the video
                 success = self.converter.convert_video(
-                    input_path, output_path, quality, preserve_hdr, file_progress_callback
+                    input_path, output_path, output_codec, quality, preserve_hdr, file_progress_callback
                 )
                 
                 if success:

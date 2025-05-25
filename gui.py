@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-GUI interface for AV1 to HEVC Video Converter
+GUI interface for Multi-Codec Video Converter
 
-A modern tkinter-based graphical user interface for the AV1 to HEVC converter
+A modern tkinter-based graphical user interface for video codec conversion
 with real-time progress tracking, batch processing, and system information.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 import logging
 
-from config import Config
+from config import Config, SUPPORTED_CODECS
 from converter import VideoConverter, BatchConverter, ConversionProgress
 from utils import VideoUtils, setup_logging
 
@@ -177,14 +177,14 @@ class ProgressWindow:
         self.window.destroy()
 
 
-class AV1toHEVCGUI:
-    """Main GUI application for AV1 to HEVC converter."""
+class VideoConverterGUI:
+    """Main GUI application for multi-codec video converter."""
     
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("AV1 to HEVC Video Converter")
-        self.root.geometry("800x600")
-        self.root.minsize(700, 500)
+        self.root.title("Multi-Codec Video Converter")
+        self.root.geometry("850x650")
+        self.root.minsize(750, 550)
         
         # Initialize converter components
         self.config = None
@@ -287,10 +287,30 @@ class AV1toHEVCGUI:
         
         # Single file or directory choice
         self.conversion_mode = tk.StringVar(value="single")
-        ttk.Radiobutton(input_frame, text="Single File", variable=self.conversion_mode, 
-                       value="single", command=self.on_mode_change).pack(anchor=tk.W)
-        ttk.Radiobutton(input_frame, text="Directory (Batch)", variable=self.conversion_mode, 
-                       value="batch", command=self.on_mode_change).pack(anchor=tk.W)
+        mode_frame = ttk.Frame(input_frame)
+        mode_frame.pack(fill=tk.X)
+        
+        ttk.Radiobutton(mode_frame, text="Single File", variable=self.conversion_mode, 
+                       value="single", command=self.on_mode_change).pack(side=tk.LEFT)
+        ttk.Radiobutton(mode_frame, text="Directory (Batch)", variable=self.conversion_mode, 
+                       value="batch", command=self.on_mode_change).pack(side=tk.LEFT, padx=(20, 0))
+        
+        # Input codec filter (for batch mode)
+        self.filter_frame = ttk.Frame(input_frame)
+        self.filter_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Label(self.filter_frame, text="Filter by codec:").pack(side=tk.LEFT)
+        self.input_codec_filter = tk.StringVar(value="all")
+        codec_values = ["all"] + list(SUPPORTED_CODECS["input"].keys())
+        codec_names = ["All codecs"] + [SUPPORTED_CODECS["input"][c]["name"] for c in codec_values[1:]]
+        
+        self.codec_filter_combo = ttk.Combobox(self.filter_frame, textvariable=self.input_codec_filter,
+                                              values=codec_names, state="readonly", width=20)
+        self.codec_filter_combo.pack(side=tk.LEFT, padx=(10, 0))
+        self.codec_filter_combo.current(0)
+        
+        # Initially hide filter frame
+        self.filter_frame.pack_forget()
         
         # Input path
         input_path_frame = ttk.Frame(input_frame)
@@ -309,6 +329,24 @@ class AV1toHEVCGUI:
         output_frame = ttk.LabelFrame(main_frame, text="Output Settings", padding="10")
         output_frame.pack(fill=tk.X, pady=(0, 10))
         
+        # Codec selection
+        codec_frame = ttk.Frame(output_frame)
+        codec_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(codec_frame, text="Output codec:").pack(side=tk.LEFT)
+        self.output_codec = tk.StringVar(value="hevc")
+        output_codec_names = [SUPPORTED_CODECS["output"][c]["name"] for c in SUPPORTED_CODECS["output"]]
+        output_codec_values = list(SUPPORTED_CODECS["output"].keys())
+        
+        self.codec_combo = ttk.Combobox(codec_frame, textvariable=self.output_codec,
+                                       values=output_codec_names, state="readonly", width=20)
+        self.codec_combo.pack(side=tk.LEFT, padx=(10, 0))
+        self.codec_combo.current(0)  # Default to HEVC
+        
+        # Bind codec selection change
+        self.codec_combo.bind('<<ComboboxSelected>>', self.on_codec_change)
+        
+        # Output path
         output_path_frame = ttk.Frame(output_frame)
         output_path_frame.pack(fill=tk.X)
         
@@ -350,10 +388,10 @@ class AV1toHEVCGUI:
         options_frame.pack(fill=tk.X, pady=(0, 10))
         
         self.preserve_hdr = tk.BooleanVar(value=True)
-        hdr_check = ttk.Checkbutton(options_frame, text="Preserve HDR metadata", 
-                                   variable=self.preserve_hdr)
-        hdr_check.pack(anchor=tk.W)
-        ToolTip(hdr_check, "Preserve HDR10, HDR10+, and HLG metadata in the output file")
+        self.hdr_check = ttk.Checkbutton(options_frame, text="Preserve HDR metadata", 
+                                        variable=self.preserve_hdr)
+        self.hdr_check.pack(anchor=tk.W)
+        ToolTip(self.hdr_check, "Preserve HDR10, HDR10+, and HLG metadata in the output file (HEVC/AV1 only)")
         
         self.overwrite_existing = tk.BooleanVar(value=False)
         overwrite_check = ttk.Checkbutton(options_frame, text="Overwrite existing files", 
@@ -390,8 +428,10 @@ class AV1toHEVCGUI:
         encoder_frame.pack(fill=tk.X, pady=(0, 10))
         
         if self.config:
-            current_encoder = self.config.encoder_config.get('encoder', 'Unknown')
-            gpu_type = self.config.gpu_type or 'CPU'
+            # Get current encoder info for default codec (HEVC)
+            encoder_type, encoder_config = self.config.get_encoder_config('hevc')
+            current_encoder = encoder_config.get('encoder', 'Unknown')
+            gpu_type = encoder_type if encoder_type != 'cpu' else 'CPU'
             
             ttk.Label(encoder_frame, text=f"Current Encoder: {current_encoder}").pack(anchor=tk.W)
             ttk.Label(encoder_frame, text=f"Hardware Acceleration: {gpu_type.upper()}").pack(anchor=tk.W)
@@ -453,9 +493,26 @@ class AV1toHEVCGUI:
             
             ttk.Label(system_frame, text="GPU Acceleration:").grid(row=1, column=0, sticky=tk.W)
             ttk.Label(system_frame, text=gpu_status, style=gpu_color).grid(row=1, column=1, sticky=tk.W, padx=(10, 0))
-            
-            ttk.Label(system_frame, text="Encoder:").grid(row=2, column=0, sticky=tk.W)
-            ttk.Label(system_frame, text=self.config.encoder_config.get('encoder', 'Unknown')).grid(row=2, column=1, sticky=tk.W, padx=(10, 0))
+        
+        # Available encoders
+        encoders_frame = ttk.LabelFrame(info_frame, text="Available Encoders", padding="10")
+        encoders_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        if self.config:
+            row = 0
+            for codec in SUPPORTED_CODECS['output']:
+                codec_name = SUPPORTED_CODECS['output'][codec]['name']
+                ttk.Label(encoders_frame, text=f"{codec_name}:", font=('Arial', 10, 'bold')).grid(row=row, column=0, sticky=tk.W, pady=(5, 0))
+                
+                available = self.config.available_encoders.get(codec, [])
+                if available:
+                    encoder_type, encoder_config = self.config.get_encoder_config(codec)
+                    encoder_name = encoder_config['encoder']
+                    encoder_info = f"{encoder_name} ({encoder_type})"
+                    ttk.Label(encoders_frame, text=encoder_info).grid(row=row, column=1, sticky=tk.W, padx=(10, 0), pady=(5, 0))
+                else:
+                    ttk.Label(encoders_frame, text="Not available", foreground="red").grid(row=row, column=1, sticky=tk.W, padx=(10, 0), pady=(5, 0))
+                row += 1
         
         # Supported formats
         formats_frame = ttk.LabelFrame(info_frame, text="Supported Input Formats", padding="10")
@@ -503,30 +560,96 @@ class AV1toHEVCGUI:
         mode = self.conversion_mode.get()
         if mode == "single":
             self.browse_input_btn.config(text="Browse File...")
+            # Hide filter frame
+            self.filter_frame.pack_forget()
         else:
             self.browse_input_btn.config(text="Browse Directory...")
+            # Show filter frame
+            self.filter_frame.pack(fill=tk.X, pady=(10, 0))
         
         # Clear current paths
         self.input_path.set("")
         self.output_path.set("")
         self.update_file_info()
     
+    def on_codec_change(self, event=None):
+        """Handle output codec change."""
+        # Get the selected codec name and find the corresponding key
+        selected_name = self.codec_combo.get()
+        for codec_key, codec_info in SUPPORTED_CODECS["output"].items():
+            if codec_info["name"] == selected_name:
+                self.output_codec.set(codec_key)
+                break
+        
+        # Update HDR checkbox state based on codec support
+        if self.output_codec.get() in ["hevc", "av1"]:
+            self.hdr_check.config(state="normal")
+        else:
+            self.hdr_check.config(state="disabled")
+            self.preserve_hdr.set(False)
+        
+        # Update quality range based on codec
+        if self.output_codec.get() == "av1":
+            self.quality_slider.configure(from_=1, to=63)
+            self.quality_var.set(30)
+        elif self.output_codec.get() == "vp9":
+            self.quality_slider.configure(from_=1, to=63)
+            self.quality_var.set(30)
+        else:
+            self.quality_slider.configure(from_=1, to=51)
+            self.quality_var.set(23)
+        
+        self.on_quality_change(self.quality_var.get())
+    
+    def get_selected_input_codec(self) -> Optional[str]:
+        """Get the selected input codec filter."""
+        if self.input_codec_filter.get() == "all" or self.input_codec_filter.get() == "All codecs":
+            return None
+        
+        # Find the codec key from the display name
+        selected_name = self.codec_filter_combo.get()
+        for codec_key, codec_info in SUPPORTED_CODECS["input"].items():
+            if codec_info["name"] == selected_name:
+                return codec_key
+        return None
+    
+    def get_selected_output_codec(self) -> str:
+        """Get the selected output codec."""
+        # The output_codec variable already contains the key
+        return self.output_codec.get()
+    
     def on_quality_change(self, value):
         """Handle quality slider change."""
         quality = int(float(value))
         self.quality_var.set(quality)
         
-        # Update quality description
-        if quality <= 18:
-            desc = f"{quality} (Very High Quality)"
-        elif quality <= 23:
-            desc = f"{quality} (High Quality)"
-        elif quality <= 28:
-            desc = f"{quality} (Medium Quality)"
-        elif quality <= 35:
-            desc = f"{quality} (Lower Quality)"
+        # Get codec-specific quality descriptions
+        output_codec = self.output_codec.get()
+        
+        if output_codec in ["av1", "vp9"]:
+            # AV1/VP9 use different quality scale
+            if quality <= 20:
+                desc = f"{quality} (Very High Quality)"
+            elif quality <= 30:
+                desc = f"{quality} (High Quality)"
+            elif quality <= 40:
+                desc = f"{quality} (Medium Quality)"
+            elif quality <= 50:
+                desc = f"{quality} (Lower Quality)"
+            else:
+                desc = f"{quality} (Very Low Quality)"
         else:
-            desc = f"{quality} (Very Low Quality)"
+            # HEVC/H.264 quality scale
+            if quality <= 18:
+                desc = f"{quality} (Very High Quality)"
+            elif quality <= 23:
+                desc = f"{quality} (High Quality)"
+            elif quality <= 28:
+                desc = f"{quality} (Medium Quality)"
+            elif quality <= 35:
+                desc = f"{quality} (Lower Quality)"
+            else:
+                desc = f"{quality} (Very Low Quality)"
         
         self.quality_label.config(text=desc)
     
@@ -540,7 +663,7 @@ class AV1toHEVCGUI:
         """Browse for input file or directory."""
         if self.conversion_mode.get() == "single":
             filename = filedialog.askopenfilename(
-                title="Select AV1 Video File",
+                title="Select Video File",
                 filetypes=[
                     ("Video files", "*.mkv *.mp4 *.m4v *.mov *.avi *.webm"),
                     ("All files", "*.*")
@@ -549,7 +672,7 @@ class AV1toHEVCGUI:
             if filename:
                 self.input_path.set(filename)
         else:
-            directory = filedialog.askdirectory(title="Select Directory with AV1 Videos")
+            directory = filedialog.askdirectory(title="Select Directory with Videos")
             if directory:
                 self.input_path.set(directory)
         
@@ -559,7 +682,7 @@ class AV1toHEVCGUI:
         """Browse for output directory."""
         if self.conversion_mode.get() == "single":
             filename = filedialog.asksaveasfilename(
-                title="Save HEVC Video As",
+                title="Save Video As",
                 defaultextension=".mkv",
                 filetypes=[
                     ("Matroska Video", "*.mkv"),
@@ -594,16 +717,22 @@ class AV1toHEVCGUI:
                 self.info_text.insert(tk.END, "Selected path is not a file.\n")
                 return
             
-            # Check if it's AV1
-            if VideoUtils.is_av1_video(path_obj):
-                self.info_text.insert(tk.END, f"✓ Valid AV1 video file: {path_obj.name}\n")
+            # Check if it's a video
+            codec = VideoUtils.get_video_codec(path_obj)
+            if codec:
+                codec_name = VideoUtils.get_codec_display_name(codec)
+                self.info_text.insert(tk.END, f"✓ Valid video file: {path_obj.name}\n")
+                self.info_text.insert(tk.END, f"Codec: {codec_name}\n")
                 
                 # Get file info
                 file_size = VideoUtils.get_file_size_mb(path_obj)
                 has_hdr = VideoUtils.has_hdr_metadata(path_obj)
                 
                 self.info_text.insert(tk.END, f"File size: {file_size:.1f} MB\n")
-                self.info_text.insert(tk.END, f"HDR metadata: {'Yes' if has_hdr else 'No'}\n")
+                
+                # Show HDR info only for codecs that support it
+                if codec in ["hevc", "av1"]:
+                    self.info_text.insert(tk.END, f"HDR metadata: {'Yes' if has_hdr else 'No'}\n")
                 
                 # Get detailed video info
                 video_info = VideoUtils.get_video_info(path_obj)
@@ -627,8 +756,8 @@ class AV1toHEVCGUI:
                     )
                     self.info_text.insert(tk.END, f"Estimated conversion time: {estimated_time}\n")
             else:
-                self.info_text.insert(tk.END, f"✗ Not an AV1 video file: {path_obj.name}\n")
-                self.info_text.insert(tk.END, "Please select a valid AV1 video file.\n")
+                self.info_text.insert(tk.END, f"✗ Not a video file: {path_obj.name}\n")
+                self.info_text.insert(tk.END, "Please select a valid video file.\n")
         
         else:  # Batch mode
             if not path_obj.exists():
@@ -639,16 +768,16 @@ class AV1toHEVCGUI:
                 self.info_text.insert(tk.END, "Selected path is not a directory.\n")
                 return
             
-            # Find AV1 videos
-            av1_videos = VideoUtils.find_av1_videos(path_obj)
+            # Find video files
+            video_files = VideoUtils.find_video_files(path_obj)
             
-            if av1_videos:
-                self.info_text.insert(tk.END, f"✓ Found {len(av1_videos)} AV1 video(s) in directory:\n\n")
+            if video_files:
+                self.info_text.insert(tk.END, f"✓ Found {len(video_files)} video(s) in directory:\n\n")
                 
                 total_size = 0
                 hdr_count = 0
                 
-                for video in av1_videos[:10]:  # Show first 10
+                for video in video_files[:10]:  # Show first 10
                     file_size = VideoUtils.get_file_size_mb(video)
                     has_hdr = VideoUtils.has_hdr_metadata(video)
                     total_size += file_size
@@ -658,8 +787,8 @@ class AV1toHEVCGUI:
                     hdr_indicator = " [HDR]" if has_hdr else ""
                     self.info_text.insert(tk.END, f"  • {video.name} ({file_size:.1f} MB){hdr_indicator}\n")
                 
-                if len(av1_videos) > 10:
-                    self.info_text.insert(tk.END, f"  ... and {len(av1_videos) - 10} more files\n")
+                if len(video_files) > 10:
+                    self.info_text.insert(tk.END, f"  ... and {len(video_files) - 10} more files\n")
                 
                 self.info_text.insert(tk.END, f"\nTotal size: {total_size:.1f} MB\n")
                 self.info_text.insert(tk.END, f"Files with HDR: {hdr_count}\n")
@@ -671,8 +800,8 @@ class AV1toHEVCGUI:
                     )
                     self.info_text.insert(tk.END, f"Estimated total time: {estimated_time}\n")
             else:
-                self.info_text.insert(tk.END, f"✗ No AV1 videos found in directory: {path_obj}\n")
-                self.info_text.insert(tk.END, "The directory may be empty or contain no AV1 video files.\n")
+                self.info_text.insert(tk.END, f"✗ No video files found in directory: {path_obj}\n")
+                self.info_text.insert(tk.END, "The directory may be empty or contain no video files.\n")
     
     def dry_run(self):
         """Perform a dry run to show what would be converted."""
@@ -681,12 +810,13 @@ class AV1toHEVCGUI:
         
         input_path = Path(self.input_path.get())
         output_path = Path(self.output_path.get()) if self.output_path.get() else None
+        output_codec = self.get_selected_output_codec()
         
         self.info_text.delete(1.0, tk.END)
         self.info_text.insert(tk.END, "DRY RUN - Preview of conversion:\n\n")
         
         if self.conversion_mode.get() == "single":
-            output_file = output_path or VideoUtils.generate_output_path(input_path)
+            output_file = output_path or VideoUtils.generate_output_path(input_path, None, output_codec)
             
             # Ensure output file is a Path object with proper extension
             if not isinstance(output_file, Path):
@@ -696,23 +826,48 @@ class AV1toHEVCGUI:
             if not output_file.is_absolute():
                 output_file = input_path.parent / output_file
             
-            if not output_file.suffix:
-                output_file = output_file.with_suffix('.mkv')
+            # Get proper extension for codec
+            codec_extensions = {
+                'hevc': '.mkv',
+                'h264': '.mp4', 
+                'av1': '.mkv',
+                'vp9': '.webm'
+            }
+            
+            if not output_file.suffix or output_file.suffix not in codec_extensions.values():
+                output_file = output_file.with_suffix(codec_extensions.get(output_codec, '.mkv'))
+                
             self.info_text.insert(tk.END, f"Input:  {input_path}\n")
             self.info_text.insert(tk.END, f"Output: {output_file}\n")
+            
+            # Show codec conversion
+            input_codec = VideoUtils.get_video_codec(input_path)
+            if input_codec:
+                input_codec_name = VideoUtils.get_codec_display_name(input_codec)
+                output_codec_name = VideoUtils.get_codec_display_name(output_codec)
+                self.info_text.insert(tk.END, f"Codec:  {input_codec_name} → {output_codec_name}\n")
             
             file_size = VideoUtils.get_file_size_mb(input_path)
             has_hdr = VideoUtils.has_hdr_metadata(input_path)
             
             self.info_text.insert(tk.END, f"Size:   {file_size:.1f} MB\n")
-            self.info_text.insert(tk.END, f"HDR:    {'Yes' if has_hdr else 'No'}\n")
+            
+            # Show HDR only if relevant
+            if output_codec in ["hevc", "av1"] and has_hdr:
+                self.info_text.insert(tk.END, f"HDR:    Yes (will be preserved)\n")
+            elif has_hdr:
+                self.info_text.insert(tk.END, f"HDR:    Yes (will be lost - {output_codec} doesn't support HDR)\n")
+            
             self.info_text.insert(tk.END, f"Quality: {self.quality_var.get()}\n")
             
             if self.config:
-                self.info_text.insert(tk.END, f"Encoder: {self.config.encoder_config['encoder']}\n")
+                encoder_type, encoder_config = self.config.get_encoder_config(output_codec)
+                self.info_text.insert(tk.END, f"Encoder: {encoder_config['encoder']} ({encoder_type})\n")
         
         else:  # Batch mode
-            av1_videos = VideoUtils.find_av1_videos(input_path)
+            # Get filter codec if any
+            input_codec_filter = self.get_selected_input_codec()
+            video_files = VideoUtils.find_videos_by_codec(input_path, input_codec_filter)
             output_dir = output_path or input_path
             
             # Ensure output_dir is a Path object
@@ -721,16 +876,30 @@ class AV1toHEVCGUI:
             
             self.info_text.insert(tk.END, f"Input directory:  {input_path}\n")
             self.info_text.insert(tk.END, f"Output directory: {output_dir}\n")
-            self.info_text.insert(tk.END, f"Files to convert: {len(av1_videos)}\n\n")
             
-            for video in av1_videos:
-                output_file = VideoUtils.generate_output_path(video, output_dir)
-                file_size = VideoUtils.get_file_size_mb(video)
-                has_hdr = VideoUtils.has_hdr_metadata(video)
-                hdr_indicator = " [HDR]" if has_hdr else ""
-                
-                self.info_text.insert(tk.END, 
-                    f"  {video.name} ({file_size:.1f} MB){hdr_indicator} → {output_file.name}\n")
+            if input_codec_filter:
+                filter_name = VideoUtils.get_codec_display_name(input_codec_filter)
+                self.info_text.insert(tk.END, f"Input filter:     {filter_name} files only\n")
+            
+            output_codec_name = VideoUtils.get_codec_display_name(output_codec)
+            self.info_text.insert(tk.END, f"Output codec:     {output_codec_name}\n")
+            self.info_text.insert(tk.END, f"Files to convert: {len(video_files)}\n\n")
+            
+            for video in video_files[:10]:  # Show first 10
+                input_codec = VideoUtils.get_video_codec(video)
+                if input_codec == output_codec:
+                    self.info_text.insert(tk.END, f"  [SKIP] {video.name} - already in {output_codec_name} format\n")
+                else:
+                    output_file = VideoUtils.generate_output_path(video, output_dir, output_codec)
+                    file_size = VideoUtils.get_file_size_mb(video)
+                    has_hdr = VideoUtils.has_hdr_metadata(video)
+                    hdr_indicator = " [HDR]" if has_hdr else ""
+                    
+                    self.info_text.insert(tk.END, 
+                        f"  {video.name} ({file_size:.1f} MB){hdr_indicator} → {output_file.name}\n")
+            
+            if len(video_files) > 10:
+                self.info_text.insert(tk.END, f"  ... and {len(video_files) - 10} more files\n")
     
     def validate_inputs(self):
         """Validate user inputs before conversion."""
@@ -744,13 +913,13 @@ class AV1toHEVCGUI:
             return False
         
         if self.conversion_mode.get() == "single":
-            if not VideoUtils.is_av1_video(input_path):
-                messagebox.showerror("Input Error", "Selected file is not an AV1 video.")
+            if not VideoUtils.is_video_file(input_path):
+                messagebox.showerror("Input Error", "Selected file is not a video.")
                 return False
         else:
-            av1_videos = VideoUtils.find_av1_videos(input_path)
-            if not av1_videos:
-                messagebox.showerror("Input Error", "No AV1 videos found in selected directory.")
+            video_files = VideoUtils.find_video_files(input_path)
+            if not video_files:
+                messagebox.showerror("Input Error", "No video files found in selected directory.")
                 return False
         
         # Validate FFmpeg
@@ -800,10 +969,11 @@ class AV1toHEVCGUI:
             output_path = Path(self.output_path.get()) if self.output_path.get() else None
             quality = self.quality_var.get()
             preserve_hdr = self.preserve_hdr.get()
+            output_codec = self.get_selected_output_codec()
             
             if self.conversion_mode.get() == "single":
                 # Single file conversion
-                output_file = output_path or VideoUtils.generate_output_path(input_path)
+                output_file = output_path or VideoUtils.generate_output_path(input_path, None, output_codec)
                 
                 # Ensure output file is a Path object with proper extension
                 if not isinstance(output_file, Path):
@@ -813,9 +983,17 @@ class AV1toHEVCGUI:
                 if not output_file.is_absolute():
                     output_file = input_path.parent / output_file
                 
-                # Ensure the file has an extension (add .mkv if missing)
-                if not output_file.suffix:
-                    output_file = output_file.with_suffix('.mkv')
+                # Get proper extension for codec
+                codec_extensions = {
+                    'hevc': '.mkv',
+                    'h264': '.mp4',
+                    'av1': '.mkv',
+                    'vp9': '.webm'
+                }
+                
+                # Ensure the file has proper extension
+                if not output_file.suffix or output_file.suffix not in codec_extensions.values():
+                    output_file = output_file.with_suffix(codec_extensions.get(output_codec, '.mkv'))
                 
                 # Log the final output path for debugging
                 self.message_queue.put(('log', f"Output file will be: {output_file}"))
@@ -834,7 +1012,7 @@ class AV1toHEVCGUI:
                 
                 self.message_queue.put(('log', f"Starting conversion of {input_path.name}"))
                 success = self.converter.convert_video(
-                    input_path, output_file, quality, preserve_hdr, progress_callback
+                    input_path, output_file, output_codec, quality, preserve_hdr, progress_callback
                 )
                 
                 if success:
@@ -850,6 +1028,9 @@ class AV1toHEVCGUI:
                 if not isinstance(output_dir, Path):
                     output_dir = Path(output_dir)
                 
+                # Get input codec filter
+                input_codec_filter = self.get_selected_input_codec()
+                
                 def batch_progress_callback(filename: str, current: int, total: int, progress: ConversionProgress):
                     if self.progress_window and self.progress_window.cancelled:
                         # Actually cancel the conversion
@@ -861,7 +1042,8 @@ class AV1toHEVCGUI:
                 
                 self.message_queue.put(('log', f"Starting batch conversion in {input_path}"))
                 results = self.batch_converter.convert_directory(
-                    input_path, output_dir, quality, preserve_hdr, batch_progress_callback
+                    input_path, output_dir, input_codec_filter, output_codec, 
+                    quality, preserve_hdr, batch_progress_callback
                 )
                 
                 # Report results
@@ -962,7 +1144,7 @@ def main():
             return
     
     # Create and run the GUI
-    app = AV1toHEVCGUI()
+    app = VideoConverterGUI()
     app.run()
 
 
