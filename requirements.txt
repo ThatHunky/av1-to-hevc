@@ -1,0 +1,5 @@
+ffmpeg-python>=0.2.0
+click>=8.0.0
+colorama>=0.4.6
+tqdm>=4.64.0
+pillow>=9.0.0 
